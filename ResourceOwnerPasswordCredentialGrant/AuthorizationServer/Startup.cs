@@ -26,10 +26,16 @@ namespace AuthorizationServer
 
                 // イベントコールバックメソッドの設定
                 Provider = new OAuthAuthorizationServerProvider {
+                    OnValidateTokenRequest = ValidateTokenRequest,
+                    OnValidateAuthorizeRequest = ValidateAuthorizeRequest,
                     // ClientIdとClientSecretの検証
                     OnValidateClientAuthentication = ValidateClientAuthentication,
                     // ResourceOwnerCredentialsのときの処理
-                    OnGrantResourceOwnerCredentials = GrantResourceOwnerCredentials
+                    OnGrantResourceOwnerCredentials = GrantResourceOwnerCredentials,
+                    OnTokenEndpoint = TokenEndpoint,
+                    OnTokenEndpointResponse = TokenEndpointResponse,
+                    OnAuthorizationEndpointResponse = AuthorizationEndpointResponse,
+
                 },
 
                 // リフレッシュトークンの生成と受信コールバックの設定
@@ -45,6 +51,18 @@ namespace AuthorizationServer
             app.UseOAuthAuthorizationServer(option);
         }
 
+        /// <summary>
+        /// 要求の発信元が登録された「client_id」であること、およびそのクライアントの正しい資格情報が
+        /// 要求に存在することを検証するために呼び出されます。Webアプリケーションが基本認証資格情報を受け入れる場合、
+        /// context.TryGetBasicCredentials（out clientId、out clientSecret）が呼び出されて、
+        /// リクエストヘッダーに存在する場合にこれらの値を取得します。
+        /// Webアプリケーションが「client_id」と「client_secret」をフォームエンコードされたPOSTパラメータとして受け入れる場合、
+        /// context.TryGetFormCredentials（out clientId、out clientSecret）を呼び出して、
+        /// リクエストの本文にこれらの値がある場合にそれらの値を取得できます。
+        /// context.Validatedが呼び出されない場合、リクエストはこれ以上続行されません。
+        /// </summary>
+        /// <param name="context"></param>
+        /// <returns></returns>
         private Task ValidateClientAuthentication(OAuthValidateClientAuthenticationContext context)
         {
             string clientId;
@@ -62,9 +80,50 @@ namespace AuthorizationServer
             return Task.FromResult(0);
         }
 
-        // ResourceOwnerCredentialsのときの処理
+        /// <summary>
+        /// 承認エンドポイントへのリクエストごとに呼び出され、リクエストが有効で続行する必要があるかどうかを判断します。
+        /// OAuthAuthorizationServerProviderを使用するときのデフォルトの動作は、
+        /// 検証されたクライアントリダイレクトURIを使用して、整形式の要求が処理を続行することを前提としています。
+        /// アプリケーションは追加の制約を追加できます。
+        /// </summary>
+        /// <param name="context"></param>
+        /// <returns></returns>
+        private Task ValidateAuthorizeRequest(OAuthValidateAuthorizeRequestContext context)
+        {
+            context.Validated();
+            return Task.FromResult(0);
+        }
+
+        /// <summary>
+        /// トークンエンドポイントへのリクエストごとに呼び出され、リクエストが有効で続行する必要があるかどうかを判断します。
+        /// OAuthAuthorizationServerProviderを使用する場合のデフォルトの動作は、
+        /// 検証済みのクライアント資格情報を使用して、整形式の要求が処理を続行することを前提としています。アプリケーションは追加の制約を追加できます。
+        /// </summary>
+        /// <param name="context"></param>
+        /// <returns></returns>
+        private Task ValidateTokenRequest(OAuthValidateTokenRequestContext context)
+        {
+            //TODO: Determine which grant types will actually support - these will probably be the only ones
+            if (!context.TokenRequest.IsAuthorizationCodeGrantType &&
+                !context.TokenRequest.IsResourceOwnerPasswordCredentialsGrantType &&
+                !context.TokenRequest.IsRefreshTokenGrantType)
+            {
+                context.Rejected();
+                context.SetError("invalid_grant_type", "Only grant_type=authorization_code, grant_type=password or grant_type=refresh_token are accepted by this server.");
+                return Task.FromResult(0);
+            }
+
+            return Task.FromResult(context.Validated());
+        }
+
         private Task GrantResourceOwnerCredentials(OAuthGrantResourceOwnerCredentialsContext context)
         {
+            if (context.UserName == null || context.Password == null)
+            {
+                context.SetError("invalid_grant", "The user name or password is incorrect.");
+                return Task.FromResult(0);
+            }
+
             // usernameとpasswordをGetする
             string username = context.UserName;
             string password = context.Password;
@@ -82,6 +141,19 @@ namespace AuthorizationServer
             return Task.FromResult(0);
         }
 
+        /// <summary>
+        /// 成功したトークンエンドポイントリクエストの最終段階で呼び出されます。
+        /// アプリケーションは、アクセスまたはリフレッシュトークンの発行に使用されているクレームの最終的な変更を行うために、
+        /// この呼び出しを実装できます。この呼び出しは、トークンエンドポイントのJSON応答本文に追加の応答パラメーターを追加するためにも使用できます。
+        /// </summary>
+        /// <param name="context"></param>
+        private Task TokenEndpoint(OAuthTokenEndpointContext context)
+        {
+            return Task.FromResult(0);
+        }
+
+        #region RefreshToken
+
         private void CreateRefreshToken(AuthenticationTokenCreateContext context)
         {
             // リフレッシュトークンの有効期限を設定する(1日)
@@ -97,5 +169,29 @@ namespace AuthorizationServer
             context.DeserializeTicket(context.Token);
         }
 
+        #endregion
+
+        /// <summary>
+        /// AuthorizationEndpointが応答を呼び出し元にリダイレクトする前に呼び出されます。
+        /// 応答は、暗黙的なフローを使用する場合はトークン、認証コードフローを使用する場合はAuthorizationEndpointになります。
+        /// アプリケーションは、アクセスまたはリフレッシュトークンの発行に使用されているクレームの最終的な変更を行うために、
+        /// この呼び出しを実装できます。この呼び出しは、承認エンドポイントの応答に追加の応答パラメーターを追加するためにも使用できます。
+        /// </summary>
+        /// <param name="context"></param>
+        private Task AuthorizationEndpointResponse(OAuthAuthorizationEndpointResponseContext context)
+        {
+            return Task.FromResult(0);
+        }
+
+        /// <summary>
+        /// トークンエンドポイントでコードを利用した後に受信したトークンを含むOpenIdConnectMessageを取得または設定します。
+        /// 
+        /// RefreshToken処理の後に実行される？
+        /// </summary>
+        /// <param name="context"></param>
+        private Task TokenEndpointResponse(OAuthTokenEndpointResponseContext context)
+        {
+            return Task.FromResult(0);
+        }
     }
 }
