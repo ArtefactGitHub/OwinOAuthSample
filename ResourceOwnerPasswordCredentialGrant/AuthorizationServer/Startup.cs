@@ -1,12 +1,14 @@
-﻿using System;
-using System.Linq;
-using System.Security.Claims;
-using System.Security.Principal;
-using System.Threading.Tasks;
+﻿using Constants;
 using Microsoft.Owin;
 using Microsoft.Owin.Security.Infrastructure;
 using Microsoft.Owin.Security.OAuth;
 using Owin;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Security.Claims;
+using System.Security.Principal;
+using System.Threading.Tasks;
 
 [assembly: OwinStartup(typeof(AuthorizationServer.Startup))]
 
@@ -127,18 +129,30 @@ namespace AuthorizationServer
             // usernameとpasswordをGetする
             string username = context.UserName;
             string password = context.Password;
+            var scopes = GetScopes(context.Scope);
 
-            // username と password をチェックして接続を許可する場合は
-            // identityを作成して
-            // context.Validated(identity);する
-
-            // identityを生成
-            var identity = new ClaimsIdentity(new GenericIdentity(username, OAuthDefaults.AuthenticationType), context.Scope.Select(x => new Claim("urn:oauth:scope", x)));
+            // username と password をチェックして接続を許可する場合は identity を作成して context.Validated(identity) する
+            var identity = new ClaimsIdentity(new GenericIdentity(username, OAuthDefaults.AuthenticationType), scopes.Select(x => new Claim("urn:oauth:scope", x)));
 
             // ここでセットしたidentityがTokenになる
             context.Validated(identity);
 
             return Task.FromResult(0);
+        }
+
+        /// <summary>
+        /// スコープの取得
+        /// スコープの指定が無い場合はデフォルトのスコープをセットする
+        /// 指定がある場合はその値で上書きする
+        /// </summary>
+        /// <param name="scopes"></param>
+        /// <returns></returns>
+        private IEnumerable<string> GetScopes(IList<string> scopes)
+        {
+            var result = (scopes.All(x => string.IsNullOrWhiteSpace(x)) ?
+                            new List<string>() { ScopeTypes.Standard }
+                          : scopes.Where(x => !string.IsNullOrWhiteSpace(x)).ToList());
+            return result.Distinct().AsEnumerable();
         }
 
         /// <summary>

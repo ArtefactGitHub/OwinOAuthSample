@@ -1,4 +1,7 @@
-﻿using System.Collections.Generic;
+﻿using Constants;
+using Newtonsoft.Json.Linq;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -8,25 +11,13 @@ using System.Web.Http.Controllers;
 
 namespace ResourceServer
 {
-    public class RollTypes
-    {
-        public const string User = "User";
-        public const string Admin = "Admin";
-        public const string Uploader = "Uploader";
-    }
-    public class ScopeTypes
-    {
-        public const string Standard = "Standard";
-        public const string UploadOnly = "UploadOnly";
-    }
-
     public class MyAuthorizeFilter : AuthorizeAttribute
     {
         public string Scopes { get; } = ScopeTypes.Standard;
 
         public MyAuthorizeFilter() { }
 
-        public MyAuthorizeFilter(string scopes) => Scopes = scopes;
+        public MyAuthorizeFilter(params string[] scopes) => Scopes = string.Join(" ", scopes);
 
         public override void OnAuthorization(HttpActionContext actionContext)
         {
@@ -61,22 +52,28 @@ namespace ResourceServer
     // AccessTokenの検証はOwinが勝手にやってくれる
     public class TestController : ApiController
     {
+        [HttpGet]
         [MyAuthorizeFilter]
         public IEnumerable<string> Get()
         {
             // this.User.Identity が Token をデコードしたもの
             string value = $"Your Name is {this.User.Identity.Name}";
-            return new string[] { "result value1", value };
+            return new string[] { "result value", value };
         }
 
-        [HttpGet]
-        [MyAuthorizeFilter(scopes: "UploadOnly")]
-        [Route("api/TestUploader")]
-        public IEnumerable<string> TestUploader()
+        [HttpPost]
+        [MyAuthorizeFilter(ScopeTypes.Standard, ScopeTypes.UploadOnly)]
+        public IEnumerable<string> Post(JObject hoge)
         {
             // this.User.Identity が Token をデコードしたもの
             string value = $"Your Name is {this.User.Identity.Name}";
-            return new string[] { "Authorize Roll Uploader!" };
+            
+            foreach(var pair in hoge)
+            {
+                Debug.WriteLine($"key : {pair.Key}");
+                Debug.WriteLine($"value : {pair.Value}");
+            }
+            return new string[] { $"Authorize Scope! post data is {hoge}" };
         }
     }
 }
