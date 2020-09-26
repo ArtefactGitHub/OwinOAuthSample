@@ -2,20 +2,32 @@
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Security.Claims;
 using System.Web.Http;
 using System.Web.Http.Controllers;
 
 namespace ResourceServer
 {
-    public class RollType
+    public class RollTypes
     {
         public const string User = "User";
         public const string Admin = "Admin";
         public const string Uploader = "Uploader";
     }
+    public class ScopeTypes
+    {
+        public const string Standard = "Standard";
+        public const string UploadOnly = "UploadOnly";
+    }
 
     public class MyAuthorizeFilter : AuthorizeAttribute
     {
+        public string Scopes { get; } = ScopeTypes.Standard;
+
+        public MyAuthorizeFilter() { }
+
+        public MyAuthorizeFilter(string scopes) => Scopes = scopes;
+
         public override void OnAuthorization(HttpActionContext actionContext)
         {
             base.OnAuthorization(actionContext);
@@ -27,16 +39,15 @@ namespace ResourceServer
             if (!currentIdentity.IsAuthenticated)
                 return false;
 
-            // アップロードRoll判定
-            var actionCustomAttribute = actionContext.ActionDescriptor.GetCustomAttributes<MyAuthorizeFilter>().Single();
-            if (actionCustomAttribute.Roles.Contains(RollType.Uploader))
+            // 下記2つのどちらかに当てはまる場合は承認しない
+            // 　・API属性のスコープが空ではない、かつトークンのスコープが全て空
+            // 　・トークンのスコープに、API属性のスコープが1つも存在しない
+            var scopeClaims = (actionContext.RequestContext.Principal as ClaimsPrincipal).FindAll("urn:oauth:scope");
+            var attribute = actionContext.ActionDescriptor.GetCustomAttributes<MyAuthorizeFilter>().Single();
+            if((!string.IsNullOrWhiteSpace(attribute.Scopes) && scopeClaims.All(scopeClaim => string.IsNullOrWhiteSpace(scopeClaim.Value)))
+            || (!scopeClaims.Any(scopeClaim => attribute.Scopes.Contains(scopeClaim.Value))))
             {
-                var scopes = ((System.Security.Claims.ClaimsPrincipal)actionContext.RequestContext.Principal).FindAll("urn:oauth:scope");
-                //if (!actionContext.RequestContext.Principal.IsInRole(RollType.Uploader))
-                if (scopes.Count() == 0 || !scopes.Any(x => x.Value == RollType.Uploader))
-                {
-                    actionContext.Response = actionContext.Request.CreateResponse(HttpStatusCode.Unauthorized);
-                }
+                actionContext.Response = actionContext.Request.CreateResponse(HttpStatusCode.Unauthorized);
             }
 
             return true;
@@ -50,7 +61,7 @@ namespace ResourceServer
     // AccessTokenの検証はOwinが勝手にやってくれる
     public class TestController : ApiController
     {
-        [Authorize]
+        [MyAuthorizeFilter]
         public IEnumerable<string> Get()
         {
             // this.User.Identity が Token をデコードしたもの
@@ -59,7 +70,7 @@ namespace ResourceServer
         }
 
         [HttpGet]
-        [MyAuthorizeFilter(Roles = "Uploader")]
+        [MyAuthorizeFilter(scopes: "UploadOnly")]
         [Route("api/TestUploader")]
         public IEnumerable<string> TestUploader()
         {
